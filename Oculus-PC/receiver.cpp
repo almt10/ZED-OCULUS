@@ -15,6 +15,7 @@
 #include <SDL_syswm.h>
 #include <iostream>
 #include <conio.h>
+#include <fstream>
 
 
 #include <GL/glew.h>
@@ -35,7 +36,7 @@
 #include <sstream>
 #include "Shader.hpp"
 #include <list>
-
+#include <chrono>
 
 GLchar* OVR_ZED_VS =
 "#version 330 core\n \
@@ -516,6 +517,18 @@ int main(int argc, char *argv[])
 		cv::Mat image0 = cv::Mat(resizeHeight, resizeWidth, CV_8UC4, 1);
 		cv::Mat image1 = cv::Mat(zedHeight, zedWidth, CV_8UC4, 1);
 
+		//variables to measure the time we use to pass the images to oculus
+		std::chrono::time_point<std::chrono::system_clock> startChrono, endChrono;
+		startChrono = std::chrono::system_clock::now();
+		endChrono = std::chrono::system_clock::now();
+		std::chrono::duration<double> elapsed_seconds;
+		double read[1000];
+		double display[1000];
+		int i = 0;
+		std::ofstream fs("readLatency.txt");
+		std::ofstream fs2("displayLatency.txt");
+
+
 		//variables used in case of decoding the images
 		std::vector<uchar> buff;
 		std::vector<uchar> buff2;
@@ -610,6 +623,7 @@ int main(int argc, char *argv[])
 				//if (isVisible) {
 				//we need to receive the data from both cameras		   
 				while (!both) {
+					startChrono = std::chrono::system_clock::now();
 					iResult = recv(ClientSocket, recvbuf, 2, 0);
 					if (iResult>0) {
 						label[0] = recvbuf[0];
@@ -746,6 +760,12 @@ int main(int argc, char *argv[])
 											length_toread -= iResult;
 											if (c == size) {
 												both = true;
+												endChrono= std::chrono::system_clock::now();
+												elapsed_seconds = endChrono - startChrono;
+												if (i < 1000) {
+													read[i] = (double)elapsed_seconds.count() * 1000;
+													fs << read[i] << endl;
+												}
 												zedc++;
 												//we create the feedback we want to send to the intermidiate node
 												sendbuf[0] = 'c';
@@ -857,6 +877,7 @@ int main(int argc, char *argv[])
 				memcpy(image1.data, bufferD, zedHeight * zedWidth * 4);
 				cv::imwrite("RigthImage.jpg", image1);*/
 				if (refresh) {
+					startChrono = std::chrono::system_clock::now();
 #if OPENGL_GPU_INTEROP
 					sl::zed::Mat m = zed->retrieveImage_gpu(sl::zed::SIDE::LEFT);
 					cudaArray_t arrIm;
@@ -1042,6 +1063,13 @@ int main(int argc, char *argv[])
 			SDL_GL_SwapWindow(window);
 			//SDL_RaiseWindow(window);
 
+			endChrono = std::chrono::system_clock::now();
+			elapsed_seconds = endChrono - startChrono;
+			if (i < 1000) {
+				display[i] = (double)elapsed_seconds.count() * 1000;
+				fs2 << display[i] << endl;
+			}
+			i++;
 
 		}
 
