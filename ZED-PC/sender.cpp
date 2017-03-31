@@ -6,6 +6,8 @@
 #include <iostream>
 #include <stddef.h>
 #include <sstream>
+#include <fstream>
+#include <chrono>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -134,13 +136,32 @@ int main()
 		unsigned int bytesToSend = 0;
 		int end = 0;
 
+		//variables to measure the time we use to pass the images to oculus
+		std::chrono::time_point<std::chrono::system_clock> startChrono, endChrono;
+		startChrono = std::chrono::system_clock::now();
+		endChrono = std::chrono::system_clock::now();
+		std::chrono::duration<double> elapsed_seconds;
+		double retrieve[1000];
+		double protocol[1000];
+		double sendData[1000];
+		int i = 0;
+		std::ofstream fs("retrieveLatency.txt");
+		std::ofstream fs2("sendLatency.txt");
+		std::ofstream fs3("protocolLatency.txt");
 
 		//Main loop
 		while (!end) {
+			startChrono = std::chrono::system_clock::now();
 			if (!zed->grab(sl::zed::SENSING_MODE::STANDARD, false, false)) {
 				infoL = zed->retrieveImage(sl::zed::SIDE::LEFT).data;
+				endChrono = std::chrono::system_clock::now();
+				elapsed_seconds = endChrono - startChrono;
+				if (i < 1000) {
+					retrieve[i] = (double)elapsed_seconds.count() * 1000; //ms
+					fs << retrieve[i] << std::endl;
+				}
 				size = sizeL;
-
+				startChrono = std::chrono::system_clock::now();
 				bufferL = (unsigned char *)realloc(bufferL, (size + 7));
 				//printf("\nsize of the image L: %d\n", size);
 				bufferL[0] = 'a';
@@ -149,6 +170,16 @@ int main()
 				memcpy(&bufferL[3], &size, sizeof(unsigned int));
 				memcpy(&bufferL[7], infoL, size);
 				bytesToSend = size + 7;
+
+
+				endChrono = std::chrono::system_clock::now();
+				elapsed_seconds = endChrono - startChrono;
+				if (i < 1000) {
+					protocol[i] = (double)elapsed_seconds.count() * 1000; //ms
+					fs3 << protocol[i] << std::endl;
+				}
+
+				startChrono = std::chrono::system_clock::now();
 				//we send the information of the Left side
 				iResult = send(ConnectSocket, (const char *)bufferL, bytesToSend, 0);
 				if (iResult == SOCKET_ERROR) {
@@ -158,9 +189,16 @@ int main()
 					break;
 					//return 1;
 				}
+				endChrono = std::chrono::system_clock::now();
+				elapsed_seconds = endChrono - startChrono;
+				if (i < 1000) {
+					sendData[i] = (double)elapsed_seconds.count() * 1000; //ms
+					fs2 << sendData[i] << std::endl;
+				}
 
 				  //now we do the same but with the Rigth image
 				infoR = zed->retrieveImage(sl::zed::SIDE::RIGHT).data;
+
 				size = sizeR;
 
 				bufferR = (unsigned char *)realloc(bufferR, (size + 7));
@@ -171,6 +209,7 @@ int main()
 				memcpy(&bufferR[3], &size, sizeof(unsigned int));
 				memcpy(&bufferR[7], infoR, size);
 				bytesToSend = size + 7;
+
 				//we send the information of the Left side
 				iResult = send(ConnectSocket, (const char *)bufferR, bytesToSend, 0);
 				if (iResult == SOCKET_ERROR) {
@@ -180,6 +219,9 @@ int main()
 					break;
 					//return 1;
 				}
+
+
+				i++;
 			}
 		}
 
