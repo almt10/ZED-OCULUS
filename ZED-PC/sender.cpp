@@ -28,7 +28,7 @@
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
 #define DEFAULT_WEB_PORT "5000"
-#define SERVER_IP "141.30.172.202"
+#define SERVER_IP "192.168.20.10"
 
 int main()
 {
@@ -135,6 +135,8 @@ int main()
 		unsigned int size = 0;
 		unsigned int bytesToSend = 0;
 		int end = 0;
+		char testL[6];
+		char testR[6];
 
 		//variables to measure the time we use to pass the images to oculus
 		std::chrono::time_point<std::chrono::system_clock> startChrono, endChrono;
@@ -181,6 +183,9 @@ int main()
 
 				startChrono = std::chrono::system_clock::now();
 				//we send the information of the Left side
+				for (int v = 0; v < 6; v++) {
+					testL[v] = bufferL[7 + v];
+				}
 				iResult = send(ConnectSocket, (const char *)bufferL, bytesToSend, 0);
 				if (iResult == SOCKET_ERROR) {
 					printf("send failed with error: %d\n", WSAGetLastError());
@@ -211,8 +216,11 @@ int main()
 				bytesToSend = size + 7;
 
 				//we send the information of the Left side
+				for (int v = 0; v < 6; v++) {
+					testR[v] = bufferR[7 + v];
+				}
 				iResult = send(ConnectSocket, (const char *)bufferR, bytesToSend, 0);
-				if (iResult == SOCKET_ERROR) {
+ 				if (iResult == SOCKET_ERROR) {
 					printf("send failed with error: %d\n", WSAGetLastError());
 					closesocket(ConnectSocket);
 					WSACleanup();
