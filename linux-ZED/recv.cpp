@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -15,7 +17,10 @@
 
 #define RESIZE_WIDTH 160
 #define RESIZE_HEIGTH 90
+#define SHMSZ 5000000
 using namespace std;
+
+pthread_mutex_t init_lock = PTHREAD_MUTEX_INITIALIZER;
 
 class QueueLatency {
     std::list<unsigned char *> queue;
@@ -71,7 +76,6 @@ void error(const char *msg)
     perror(msg);
     exit(0);
 }
-
 int main() {
 
     //part in which we initialize the socket that will SEND the information
@@ -98,6 +102,13 @@ int main() {
         error("ERROR connecting");
 
 
+    char *sendBufferSize = NULL;
+    char *sendBufferSize2 = NULL;
+    socklen_t len;
+    getsockopt(sockfd2, SOL_SOCKET, SO_RCVBUF, &sendBufferSize, &len);
+    sendBufferSize="2000000";
+    int g = setsockopt(sockfd2, SOL_SOCKET, SO_RCVBUF, sendBufferSize, sizeof(int));
+    getsockopt(sockfd2, SOL_SOCKET, SO_RCVBUF, &sendBufferSize2, &len);
     //part in which we initialize the socket that will RECEIVE the information
     int sockfd, newsockfd, portno;
     socklen_t clilen;
@@ -125,7 +136,7 @@ int main() {
         error("ERROR on accept");
 
     //part in which we initialize the socket that will SEND the FPS to the other localhost program
-    int sockfdFPS, portnoFPS, nFPS;
+    int sockfdFPS, portnoFPS, nFPS=0;
     struct sockaddr_in serv_addrFPS;
     struct hostent *serverFPS;
     const char *receiverFPS = "127.0.0.1";
@@ -148,9 +159,79 @@ int main() {
         error("ERROR connecting FPS");
 
 
+    //we declare the variables related with the shared memory
+    char cc;
+    int shmidL, shmidR, shmidCon;
+    key_t keyL, keyR, keyCon;
+    char *shmL,*shmR;
+    char *sL, *sR;
+    char *shmCon, *sCon;
 
 
-    if(nFPS<0) printf("\nError when sending the receivedFPS");
+    keyL = 5678;
+    keyR= 1567;
+
+    if ((shmidL = shmget(keyL, SHMSZ, IPC_CREAT | 0666)) < 0) {
+            perror("shmgetL");
+            exit(1);
+    }
+    if ((shmidR = shmget(keyR, SHMSZ, IPC_CREAT | 0666)) < 0) {
+            perror("shmgetR");
+            exit(1);
+    }
+
+
+    if((shmL = (char *) shmat(shmidL, NULL, 0)) == (char *) -1){
+        perror("shmatL");
+        exit(1);
+    }
+    sL=shmL;
+
+    if((shmR = (char *) shmat(shmidR, NULL, 0)) == (char *) -1){
+        perror("shmat");
+        exit(1);
+    }
+    sR=shmR;
+
+    keyCon = 2000;
+    if((shmidCon = shmget(keyCon, SHMSZ, IPC_CREAT | 0666))< 0){
+        perror("shmgetR");
+        exit(1);
+    }
+
+    if((shmCon = (char *) shmat(shmidCon, NULL, 0)) == (char *) -1){
+        perror("shmat");
+        exit(1);
+    }
+    sCon=shmCon;
+    sCon[0] = 'N';
+    //we declare some variables used to retrieve the data from the socket
+    char side;
+    int size=0;
+    int ImageSize=0;
+    int c=0;
+    char readyMemory = 'Y';
+    int bytesToSend = 0;
+    int length_toread=0;
+    bool both = false;
+    bool sendBoth = false;
+    char retrieveSide = 'L';
+    bool send =false;
+    int seqNumber = 1;
+    bool SharedMemoryReady = true;
+
+    unsigned char *bufferL = NULL;
+    unsigned char *bufferR = NULL;
+    unsigned char *info = NULL;
+    unsigned char *config = NULL;
+    unsigned char *ready = NULL;
+    ready = (unsigned char *) malloc(20);
+    config = (unsigned char *) malloc(20);
+    bufferL = (unsigned char *) malloc(15000000);
+    bufferR = (unsigned char *) malloc(15000000);
+    info = (unsigned char *) malloc(15000000);
+    unsigned char *sharedMemory = (unsigned char*)"smR";
+
     //we get some useful information from the socket
     int zedWidth = 0;
     int zedHeight = 0;
@@ -173,26 +254,6 @@ int main() {
         }
     }
 
-    //we declare some variables used to retrieve the data from the socket
-    char side;
-    int size=0;
-    int ImageSize=0;
-    int c=0;
-    int bytesToSend = 0;
-    int length_toread=0;
-    bool both = false;
-    char retrieveSide = 'L';
-    bool send =false;
-
-    unsigned char *bufferL = NULL;
-    unsigned char *bufferR = NULL;
-    unsigned char *info = NULL;
-    unsigned char *config = NULL;
-    config = (unsigned char *) malloc(20);
-    bufferL = (unsigned char *) malloc(15000000);
-    bufferR = (unsigned char *) malloc(15000000);
-    info = (unsigned char *) malloc(15000000);
-
 
     //some other variables for measure the FPS we have while sending and receiving
     std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -209,7 +270,25 @@ int main() {
     int sendFPS= 0;
     int recvc = 0;
     int sendc = 0;
-    int v = 0;
+    int v = 1;
+
+
+    //some variables to make a select in the socket to localhost
+    fd_set readfds;
+    fd_set original_socket;
+    fd_set original_stdin;
+
+    FD_ZERO(&readfds);
+    FD_ZERO(&original_socket);
+    FD_ZERO(&original_stdin);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+
+    FD_SET(sockfd2, &original_socket);
+    FD_SET(0, &original_stdin);
+    FD_SET(sockfd2, &readfds);
+
 
     //main loop
     int i = 1;
@@ -226,11 +305,13 @@ int main() {
             memcpy(config, &receivedFPS, sizeof(int));
             nFPS = write(sockfdFPS, config, sizeof(int));
 
-            printf("\nFPS received : %d ..... sent: %d",receivedFPS, sendFPS);
+            printf("\nFPS received from ZED PC(extra socket too): %d ..... sent to localhost: %d",receivedFPS, sendFPS);
         }
 
 
-        if(nFPS<0) printf("\nError when sending the receivedFPS");
+        if(nFPS<0){
+            printf("\nError when sending the receivedFPS");
+        }
 
         //we test if the socket where we receive the information has some data
         n = read(newsockfd, recvbuffer, 2);
@@ -273,46 +354,59 @@ int main() {
             }
         }
 
-
-
-        //we test if the socket where we send is free
         if(side == 'L'){
-            info[0] = 'a';
-            info[1] = 'a';
-            info[2] = side;
-            memcpy(&info[3], &size, sizeof(int));
-            memcpy(&info[7], bufferL, size);
-            bytesToSend = size+7;
-            send=true;
+            memcpy(info, &seqNumber, sizeof(int));
+            info[4] = 'a';
+            info[5] = 'a';
+            info[6] = side;
+            memcpy(&info[7], &size, sizeof(int));
+            memcpy(&info[11], bufferL, size);
+            bytesToSend = size + 11;
+
+            pthread_mutex_lock(&(init_lock));
+            memcpy(sL, info, bytesToSend);
+            pthread_mutex_unlock(&(init_lock));
 
         }
         else if(side == 'R'){
-            info[0] = 'a';
-            info[1] = 'a';
-            info[2] = side;
-            memcpy(&info[3], &size, sizeof(int));
-            memcpy(&info[7], bufferR, size);
-            bytesToSend = size+7;
-            send=true;
+            memcpy(info, &seqNumber, sizeof(int));
+            info[4] = 'a';
+            info[5] = 'a';
+            info[6] = side;
+            memcpy(&info[7], &size, sizeof(int));
+            memcpy(&info[11], bufferR, size);
+            bytesToSend = size + 11;
+            pthread_mutex_lock(&(init_lock));
+            memcpy(sR, info, bytesToSend);
+            pthread_mutex_unlock(&(init_lock));
 
+            n2 = write(sockfd2, sharedMemory, 3);
+            if(n2<0)
+                error("ERROR sending label of shared memory ready");
+
+            seqNumber++;
+            sendc++;
+            end = std::chrono::system_clock::now();
         }
+
+
+    }
 
 
         //we send this data
-        if(send) {
-            n2 = write(sockfd2, info, bytesToSend);
+        /*if(send) {
+            n2 = write(sockfd2, sharedMemory, 3);
             if (n2 < 0)
                 error("ERROR writing to socket");
             if (n2 > 0) {
+                //printf("Data sent through the socket : %s\n", sharedMemory);
                 send = false;
-                if(side == 'R'){
-                    end = std::chrono::system_clock::now();
-                    sendc++;
-                }
+                end = std::chrono::system_clock::now();
+                sendc++;
             }
-        }
+        }*/
 
-    }
+
 
 
     return 0;

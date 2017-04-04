@@ -1,20 +1,26 @@
 #include <stdio.h>
+#include <opencv2/opencv.hpp>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <array>
 
 #include <chrono>
-#include <opencv2/opencv.hpp>
 
 using namespace std;
 using namespace cv;
 
 #define RESIZE_WIDTH 160
 #define RESIZE_HEIGTH 90
+#define SHMSZ 5000000
+
+pthread_mutex_t init_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void error(const char *msg)
 {
@@ -27,7 +33,7 @@ int main() {
     int sockfd2, portno2, n2;
     struct sockaddr_in serv_addr2;
     struct hostent *server;
-    const char *receiver = "141.30.172.80";
+    const char *receiver = "192.168.10.12";
 
     portno2 = 30000;
     sockfd2 = socket(AF_INET, SOCK_STREAM, 0);
@@ -50,7 +56,7 @@ int main() {
     int sockfd, newsockfd, portno;
     socklen_t clilen;
     unsigned char *buffer = NULL;
-    buffer = (unsigned char *) malloc(40);
+    buffer = (unsigned char *) malloc(1000);
     struct sockaddr_in serv_addr, cli_addr;
     int n;
 
@@ -72,6 +78,8 @@ int main() {
     if (newsockfd < 0)
         error("ERROR on accept");
 
+    char *recvBufferSize = "2000000";
+    int g = setsockopt(newsockfd, SOL_SOCKET, SO_RCVBUF, recvBufferSize, sizeof(int));
 
     //part in which we initialize the socket that will RECEIVE the information
     int sockfdFPS, newsockfdFPS, portnoFPS;
@@ -100,6 +108,51 @@ int main() {
         error("ERROR on accept");
 
 
+    //we declare the variables related with the shared memory
+    char cc;
+    int shmidL, shmidR, shmidCon;
+    key_t keyL, keyR, keyCon;
+    char *shmL,*shmR;
+
+    char *sL, *sR;
+    char *shmCon, *sCon;
+
+    keyL = 5678;
+    keyR= 1567 ;
+
+    if ((shmidL = shmget(keyL, SHMSZ, IPC_CREAT | 0666)) < 0) {
+        perror("shmgetL");
+        exit(1);
+    }
+    if ((shmidR = shmget(keyR, SHMSZ, IPC_CREAT | 0666)) < 0) {
+        perror("shmgetR");
+        exit(1);
+    }
+
+    if((shmL = (char *) shmat(shmidL, NULL, 0)) == (char *) -1){
+        perror("shmatL");
+        exit(1);
+    }
+    sL=shmL;
+    if((shmR = (char *) shmat(shmidR, NULL, 0)) == (char *) -1){
+        perror("shmat");
+        exit(1);
+    }
+    sR=shmR;
+
+    keyCon = 2000;
+    if((shmidCon = shmget(keyCon, SHMSZ, IPC_CREAT | 0666))< 0){
+        perror("shmgetR");
+        exit(1);
+    }
+
+    if((shmCon = (char *) shmat(shmidCon, NULL, 0)) == (char *) -1){
+        perror("shmat");
+        exit(1);
+    }
+    sCon=shmCon;
+
+
     //we get some useful information from the socket
     int zedWidth = 0;
     int zedHeight = 0;
@@ -123,23 +176,33 @@ int main() {
     }
 
     //variables to receive the data and send it to the end user
-    int size = 0;
+    int sizeL = 0;
+    int sizeR=0;
     int length_toread = 0;
     int c = 0;
     bool both = false;
+    bool free = true;
     int bytesToSend = 0;
-    char side;
+    char side='L';
+    int seqNumberL=0;
+    int seqNumberR =0;
+    int oldseqNumberL = 0;
+    int oldseqNumberR = 0;
     unsigned char *infoL = NULL;
     unsigned char *infoR = NULL;
     unsigned char *info2 = NULL;
     unsigned char *config = NULL;
+    unsigned char *ready = NULL;
     char test;
+    bool send = false;
+    bool firstTime=true;
     int data = 0;
     double time_inic;
     double time_end;
     double old_bandwidth;
     double actual_bandwidth;
     size_t t = 100;
+    ready= (unsigned char *) "more";
     infoL = (unsigned char *) malloc(15000000);
     infoR = (unsigned char *) malloc(15000000);
     config = (unsigned char *) malloc(100);
@@ -163,6 +226,21 @@ int main() {
     FD_SET(0, &original_stdinFPS);
     FD_SET(newsockfdFPS, &readfdsFPS);
 
+    fd_set writefds;
+    fd_set original_socket;
+    fd_set original_stdin;
+
+    FD_ZERO(&writefds);
+    FD_ZERO(&original_socket);
+    FD_ZERO(&original_stdin);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+
+    FD_SET(newsockfd, &original_socket);
+    FD_SET(0, &original_stdin);
+    FD_SET(newsockfd, &writefds);
+
     //variables to measure the amount of FPS we have
     std::chrono::time_point<std::chrono::system_clock> start, end;
     start = std::chrono::system_clock::now();
@@ -170,6 +248,8 @@ int main() {
     std::chrono::duration<double> elapsed_seconds;
 
     int e=0;
+    char testR[6];
+    char testL[6];
     double difference= 0;
     int recvc = 0;
     int sendc = 0;
@@ -195,165 +275,138 @@ int main() {
     int i = 1;
     while (i < 2) {
         //we control the number of frames per second we send and we receive
-        elapsed_seconds= end-start;
-        if( (elapsed_seconds.count() * 1000)> 1000){
+        elapsed_seconds = end - start;
+        if ((elapsed_seconds.count() * 1000) > 1000) {
             FD_SET(newsockfdFPS, &original_socketFPS);
             FD_SET(0, &original_stdinFPS);
             FD_SET(newsockfdFPS, &readfdsFPS);
             int max_fd = newsockfdFPS;
             //we check if there is some information available in the socket that sends the camera FPS
-            int readableFPS = select(max_fd+1, &readfdsFPS, NULL, NULL, &tvFPS);
-            if (readableFPS>0)
-            {
+            int readableFPS = select(max_fd + 1, &readfdsFPS, NULL, NULL, &tvFPS);
+            if (readableFPS > 0) {
                 nFPS = read(newsockfdFPS, bufferFPS, 4);
-                if(nFPS >0){
-                    CameraFPS = *(int *)bufferFPS;
+                if (nFPS > 0) {
+                    CameraFPS = *(int *) bufferFPS;
                 }
-            }
-            else if(readableFPS < 0){
+            } else if (readableFPS < 0) {
                 printf("Error with select\n");
 
-            }
-            else{
+            } else {
                 printf("select not working\n");
             }
 
             receivedFPS = recvc;
-            sendFPS = sendc ;
+            sendFPS = sendc;
             oculus_FPS = sendFPS;
-            sendc=0;
-            recvc=0;
+            sendc = 0;
+            recvc = 0;
             start = end;
 
-            if(CameraFPS!=0 && oculus_FPS!=0){
-                if((category >1) && (oculus_FPS < (0.4 * CameraFPS))){
+            if (CameraFPS != 0 && oculus_FPS != 0) {
+                if ((category > 1) && (oculus_FPS < (0.4 * CameraFPS))) {
                     category--;
-                }
-                else{
-                    if(category<8) {
+                } else {
+                    if (category < 8) {
                         actual_bandwidth = oculus_FPS * category * category * RESIZE_WIDTH * RESIZE_HEIGTH;
-                        next_category = category +1;
+                        next_category = category + 1;
                         next_bandwidth = next_category * next_category * RESIZE_WIDTH * RESIZE_HEIGTH;
-                        if((actual_bandwidth/(next_bandwidth))>(0.6 * CameraFPS)){
+                        if ((actual_bandwidth / (next_bandwidth)) > (0.6 * CameraFPS)) {
                             category = next_category;
                         }
                     }
                 }
             }
-           printf("FPS received : %d ..... sent: %d .... Camera : %d\n",receivedFPS, sendFPS, CameraFPS);
+            printf("FPS received from localhost: %d ..... sent to OCULUS: %d .... Camera(extra socket): %d\n",
+                   receivedFPS, sendFPS, CameraFPS);
         }
 
-
+        //test if we can receive in localhost
+        // while (select == true)
         //we receive some data
-        n = read(newsockfd, buffer, 2);
-        if (n < 0) error("ERROR reading from socket");
-        if (n > 0) {
-            if ((buffer[0] != 'a') || (buffer[1] != 'a'))error("ERROR reading from socket the initial labels");
-            else {
-                n = read(newsockfd, buffer, 5);
-                if (n < 0) error("ERROR reading from socket");
-                if (n > 0) {
-                    side = buffer[0];
-                    size = *(int *) &buffer[1];
-                    length_toread = size;
-                    c = 0;
-                    //finally we read the information of the image
-                    while (length_toread > 0) {
-                        int x = min(400000, length_toread);
-                        n = read(newsockfd, buffer, min(400000, length_toread));
-                        if (n < 0) error("ERROR reading from socket the image data");
-                        if (n > 0) {
-                            if (side == 'L') {
-                                memcpy(&infoL[c], buffer, n);
-                                length_toread -= n;
-                                c += n;
-                            } else if (side == 'R') {
-                                memcpy(&infoR[c], buffer, n);
-                                c += n;
-                                length_toread -= n;
-                                if (c == size) {
-                                    both = true;
-                                    recvc++;
-                                    //end = std::chrono::system_clock::now();
-                                    e++;
-                                }
-                            } else {
-                                error("ERROR copying the data in the buffers");
-                            }
 
+        n2= read(newsockfd, buffer, 3);
+        if(n2>0){
+            if((buffer[0]=='s')&&(buffer[1]=='m')&&(buffer[2]=='R')){
+                seqNumberL = *(int *) sL;
+                seqNumberR = *(int *) sR;
+
+                sizeL = *(int *) &sL[7];
+                sizeR = *(int *) &sR[7];
+
+                pthread_mutex_lock(&(init_lock));
+                memcpy(infoL, &sL[4], sizeL+7);
+                memcpy(infoR, &sR[4], sizeR+7);
+                pthread_mutex_unlock(&(init_lock));
+
+                bytesToSend = sizeR + 7;
+
+                recvc++;
+                //now we must check that the sequence number has increased
+                if ((seqNumberL) > oldseqNumberL) {
+                    both=false;
+                    oldseqNumberL = seqNumberL;
+                }
+
+
+                while (!both) {
+                    //now we create the info we want to send
+                    if(side =='L')
+                        n2 = write(sockfd2, infoL, bytesToSend);
+                    else if(side =='R')
+                        n2 = write(sockfd2, infoR, bytesToSend);
+
+                    if (n2 < 0)
+                        error("ERROR writing to socket");
+
+                    if (side == 'L'){
+                        side = 'R';
+                    }
+                    else if (side == 'R') {
+                        sendc++;
+                        both = true;
+                        firstTime = true;
+                        side = 'L';
+                        end = std::chrono::system_clock::now();
+                        n2 = read(sockfd2, config, 10);
+                        if (n2 > 0) {
+                            if ((config[0] == 'c') && (config[0] == 'c')) {
+                                data = *(int *) &config[2];
+                                actual_FPS = *(int *) &config[6];
+                                if (abs(actual_FPS - old_FPS) > 1) {
+                                    difference = (time_end - time_inic) / CLOCKS_PER_SEC;
+                                    actual_bandwidth = old_FPS * data * 2 * 8;
+                                    //printf("\nFPS received in Oculus PC: %d", actual_FPS);
+                                    oculus_FPS = actual_FPS;
+                                }
+                                old_FPS = actual_FPS;
+                            }
+                        } else {
+                            printf("Error when reading the bandwidth information");
                         }
                     }
                 }
+
             }
         }
+                //here we process the images
+                //memcpy(image0.data, infoL, sizeL);
+                //cv::imwrite("LeftSide.jpg", image0);
+                //memcpy(image0.data, infoR, sizeR);
 
+                /*if(category != 8){
+                    if (side == 'L') memcpy(image0.data, infoL, size);
+                    else if (side == 'R') memcpy(image0.data, infoR, size);
+                    else printf("error when copying the information into the image\n");
 
-        //here we process the images
-        if(category != 8) {
-            if (side == 'L') memcpy(image0.data, infoL, size);
-            else if (side == 'R') memcpy(image0.data, infoR, size);
-            else printf("error when copying the information into the image\n");
+                    resize_width = RESIZE_WIDTH * category;
+                    resize_heigth = RESIZE_HEIGTH * category;
 
-            resize_width = RESIZE_WIDTH *category ;
-            resize_heigth = RESIZE_HEIGTH *category;
+                    resize(image0, imageResized, Size(resize_width, resize_heigth));
 
-            resize(image0, imageResized, Size(resize_width, resize_heigth));
-
-            if (side == 'L') memcpy(infoL, imageResized.data, resize_width*resize_heigth*4);
-            else if (side == 'R') memcpy(infoR, imageResized.data, resize_width*resize_heigth*4);
-            else printf("error when copying the information into the image\n");
-
-        }
-
-        //now we create the info we want to send
-        if (side == 'L') {
-            info2[0] = 'a';
-            info2[1] = 'a';
-            info2[2] = 'L';
-            memcpy(&info2[3], &size, sizeof(unsigned int));
-            memcpy(&info2[7], infoL, size);
-            bytesToSend = size + 7;
-        }
-        else if (side == 'R') {
-            //realloc(info2, size + 7);
-            info2[0] = 'a';
-            info2[1] = 'a';
-            info2[2] = 'R';
-            memcpy(&info2[3], &size, sizeof(unsigned int));
-            memcpy(&info2[7], infoR, size);
-            bytesToSend = size + 7;
-        }
-        else{
-            printf("sdsd");
-        }
-
-        //we send this data
-        n2 = write(sockfd2, info2, bytesToSend);
-        if (n2 < 0)
-            error("ERROR writing to socket");
-
-
-        if(side == 'R'){
-            sendc++;
-            end = std::chrono::system_clock::now();
-            n2 = read(sockfd2, config, 10);
-            if (n2 > 0) {
-                if ((config[0] == 'c') && (config[0] == 'c')) {
-                    data = *(int *) &config[2];
-                    actual_FPS = *(int *) &config[6];
-                    if(abs(actual_FPS - old_FPS) > 1) {
-                        difference = (time_end - time_inic) / CLOCKS_PER_SEC;
-                        actual_bandwidth= old_FPS * data * 2 * 8;
-                        //printf("\nFPS received in Oculus PC: %d", actual_FPS);
-                        oculus_FPS = actual_FPS;
-                    }
-                    old_FPS = actual_FPS;
-                }
-            } else {
-                printf("Error when reading the bandwidth information");
-            }
-        }
-
+                    if (side == 'L') memcpy(infoL, imageResized.data, resize_width * resize_heigth * 4);
+                    else if (side == 'R') memcpy(infoR, imageResized.data, resize_width * resize_heigth * 4);
+                    else printf("error when copying the information into the image\n");
+                }*/
 
     }
 
