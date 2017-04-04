@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
 		WSADATA wsaData;
 		int iResult;
 		SOCKET ListenSocket = INVALID_SOCKET;
-		SOCKET ClientSocket = INVALID_SOCKET;
+		SOCKET ClientSocket = INVALID_SOCKET;  
 
 		struct addrinfo *addr = NULL;
 		struct addrinfo hints;
@@ -829,7 +829,10 @@ int main(int argc, char *argv[])
 						//return 1;
 					}
 				}
-
+				/*memcpy(image1.data, bufferI, zedHeight*zedWidth * 4);
+				cv::imwrite("zedLeft.jpg", image1);
+				memcpy(image1.data, bufferD, zedHeight*zedWidth * 4);
+				cv::imwrite("zedRigth.jpg", image1);*/
 				/*if (encode == 'Y') {
 					buff.reserve(capacityL);
 					buff2.reserve(capacityR);
