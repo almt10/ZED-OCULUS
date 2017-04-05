@@ -621,9 +621,9 @@ int main(int argc, char *argv[])
 			if (true) {
 				// If the application is focused
 				//if (isVisible) {
-				//we need to receive the data from both cameras		   
+				//we need to receive the data from both cameras		 
+				startChrono = std::chrono::system_clock::now();
 				while (!both) {
-					startChrono = std::chrono::system_clock::now();
 					iResult = recv(ClientSocket, recvbuf, 2, 0);
 					if (iResult>0) {
 						label[0] = recvbuf[0];
@@ -631,11 +631,13 @@ int main(int argc, char *argv[])
 						assert((label[0] == 'a') && (label[1] == 'a'));
 
 						//now we read the the side of the image
-						iResult = recv(ClientSocket, recvbuf, 1, 0);
+						iResult = recv(ClientSocket, recvbuf, 5, 0);
 						if (iResult>0) {
 							side = recvbuf[0];
-							/*resize = recvbuf[1];
-							encode = recvbuf[2];*/
+							resize_factor = *(int *)&recvbuf[1];
+							imageLeft = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+							imageRight = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+							//encode = recvbuf[2];
 							assert((side == 'L') || (side == 'R'));
 
 							//now we get the size of the image
@@ -746,7 +748,6 @@ int main(int argc, char *argv[])
 								int c = 0;
 								//finally we read the information of the image
 								while (length_toread > 0) {
-
 									iResult = recv(ClientSocket, recvbuf, min(4000000, length_toread), 0);
 									if (iResult > 0) {
 										if (side == 'L') {
@@ -833,7 +834,7 @@ int main(int argc, char *argv[])
 				cv::imwrite("zedLeft.jpg", image1);
 				memcpy(image1.data, bufferD, zedHeight*zedWidth * 4);
 				cv::imwrite("zedRigth.jpg", image1);*/
-				/*if (encode == 'Y') {
+				if (encode == 'Y') {
 					buff.reserve(capacityL);
 					buff2.reserve(capacityR);
 
@@ -860,21 +861,22 @@ int main(int argc, char *argv[])
 					}
 				}
 				else {
-					if ((size == (resize_factor *resize_factor * resizeWidth * resizeHeight * 4)) && resize != 'e') {
-						memcpy(image0.data, bufferI, resize_factor *resize_factor * resizeHeight * resizeWidth * 4);
+					if ((size == (resize_factor *resize_factor * resizeWidth * resizeHeight * 4)) && (resize_factor != 8)) {
+						memcpy(imageLeft.data, bufferI, resize_factor *resize_factor * resizeHeight * resizeWidth * 4);
 						//cv::imwrite("zedReceived.jpg", image0);
-						cv::resize(image0, image1, cv::Size(zedWidth, zedHeight));
+						cv::resize(imageLeft, image1, cv::Size(zedWidth, zedHeight));
 						//cv::imwrite("zedResized.jpg", image1);
 						bufferI = (char *)realloc(bufferI, zedHeight*zedWidth * 4);
 						memcpy(bufferI, image1.data, zedHeight*zedWidth * 4);
 
-						memcpy(image0.data, bufferD, resize_factor * resize_factor *  resizeHeight * resizeWidth * 4);
+						memcpy(imageRight.data, bufferD, resize_factor * resize_factor *  resizeHeight * resizeWidth * 4);
 						//cv::imwrite("zedReceivedRigth.jpg", image0);
-						cv::resize(image0, image1, cv::Size(zedWidth, zedHeight));
+						cv::resize(imageRight, image1, cv::Size(zedWidth, zedHeight));
 						//cv::imwrite("zedResizedRigth.jpg", image1);
 						bufferD = (char *)realloc(bufferD, zedHeight*zedWidth * 4);
 						memcpy(bufferD, image1.data, zedHeight*zedWidth * 4);
-					}*/
+					}
+				}
 				/*memcpy(image1.data, bufferI,zedHeight * zedWidth * 4);
 				cv::imwrite("LeftImage.jpg", image1);
 				memcpy(image1.data, bufferD, zedHeight * zedWidth * 4);
