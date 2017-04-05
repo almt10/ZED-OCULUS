@@ -208,6 +208,12 @@ int main() {
     config = (unsigned char *) malloc(100);
     info2 = (unsigned char *) malloc(15000000);
 
+    infoL[0] = 'a';
+    infoL[1] = 'a';
+    infoL[2] = 'L';
+    infoR[0] = 'a';
+    infoR[1] = 'a';
+    infoR[2] = 'R';
 
 
     //variables related with sockets
@@ -263,13 +269,16 @@ int main() {
     int ImageSize = 0;
 
     //variables to process the image
-    Mat image0 = Mat(zedHeight, zedWidth, CV_8UC4, 1);
-    Mat imageResized = Mat(RESIZE_HEIGTH, RESIZE_WIDTH, CV_8UC4, 1);
+    Mat imageL = Mat(zedHeight, zedWidth, CV_8UC4, 1);
+    Mat imageR = Mat(zedHeight, zedWidth, CV_8UC4, 1);
+    Mat imageResizedL = Mat(RESIZE_HEIGTH, RESIZE_WIDTH, CV_8UC4, 1);
+    Mat imageResizedR = Mat(RESIZE_HEIGTH, RESIZE_WIDTH, CV_8UC4, 1);
     double ratio=0.0;
     int next_bandwidth=0;
     int next_category = 0;
     int resize_width = 0;
     int resize_heigth = 0;
+    int sizeResized = 0;
 
     //main lopp
     int i = 1;
@@ -303,21 +312,21 @@ int main() {
             start = end;
 
             if (CameraFPS != 0 && oculus_FPS != 0) {
-                if ((category > 1) && (oculus_FPS < (0.4 * CameraFPS))) {
+                if ((category > 1) && (oculus_FPS < (0.55 * CameraFPS))) {
                     category--;
                 } else {
                     if (category < 8) {
                         actual_bandwidth = oculus_FPS * category * category * RESIZE_WIDTH * RESIZE_HEIGTH;
                         next_category = category + 1;
                         next_bandwidth = next_category * next_category * RESIZE_WIDTH * RESIZE_HEIGTH;
-                        if ((actual_bandwidth / (next_bandwidth)) > (0.6 * CameraFPS)) {
+                        if (oculus_FPS > (0.7 * CameraFPS)) {
                             category = next_category;
                         }
                     }
                 }
             }
-            printf("FPS received from localhost: %d ..... sent to OCULUS: %d .... Camera(extra socket): %d\n",
-                   receivedFPS, sendFPS, CameraFPS);
+            printf("FPS received from localhost: %d ..... sent to OCULUS: %d .... Camera(extra socket): %d , category : %d\n",
+                   receivedFPS, sendFPS, CameraFPS,category);
         }
 
         //test if we can receive in localhost
@@ -333,12 +342,40 @@ int main() {
                 sizeL = *(int *) &sL[7];
                 sizeR = *(int *) &sR[7];
 
+                memcpy(&infoL[3], &category, sizeof(int));
+                memcpy(&infoR[3], &category, sizeof(int));
+
                 pthread_mutex_lock(&(init_lock));
-                memcpy(infoL, &sL[4], sizeL+7);
-                memcpy(infoR, &sR[4], sizeR+7);
+                memcpy(&infoL[7], &sL[7], sizeL+4);
+                memcpy(&infoR[7], &sR[7], sizeR+4);
                 pthread_mutex_unlock(&(init_lock));
 
-                bytesToSend = sizeR + 7;
+                bytesToSend = sizeR + 11;
+                if(category != 8){
+                    memcpy(imageL.data, &infoL[11], sizeL);
+                    memcpy(imageR.data, &infoR[11], sizeR);
+
+                    resize_width = RESIZE_WIDTH * category;
+                    resize_heigth = RESIZE_HEIGTH * category;
+
+                    Mat imageResizedL = Mat(resize_heigth, resize_width, CV_8UC4, 1);
+                    Mat imageResizedR = Mat(resize_heigth, resize_width, CV_8UC4, 1);
+
+                    resize(imageL, imageResizedL, Size(resize_width, resize_heigth));
+                    resize(imageR, imageResizedR, Size(resize_width, resize_heigth));
+
+                    sizeResized = resize_heigth * resize_width * 4;
+                    bytesToSend = sizeResized + 11;
+
+
+                    memcpy(&infoL[3], &category, sizeof(int));
+                    memcpy(&infoL[7], &sizeResized, sizeof(int));
+                    memcpy(&infoL[11], imageResizedL.data, resize_width * resize_heigth * 4);
+
+                    memcpy(&infoR[3], &category, sizeof(int));
+                    memcpy(&infoR[7], &sizeResized, sizeof(int));
+                    memcpy(&infoR[11], imageResizedR.data, resize_width * resize_heigth * 4);
+                }
 
                 recvc++;
                 //now we must check that the sequence number has increased
@@ -388,10 +425,7 @@ int main() {
 
             }
         }
-                //here we process the images
-                //memcpy(image0.data, infoL, sizeL);
-                //cv::imwrite("LeftSide.jpg", image0);
-                //memcpy(image0.data, infoR, sizeR);
+
 
                 /*if(category != 8){
                     if (side == 'L') memcpy(image0.data, infoL, size);
