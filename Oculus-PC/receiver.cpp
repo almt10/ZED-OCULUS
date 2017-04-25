@@ -210,7 +210,6 @@ int main(int argc, char *argv[])
 		// Create SDL2 Window
 		SDL_Window* window = SDL_CreateWindow("Oculus Mirror", SDL_WINDOWPOS_CENTERED_DISPLAY(display_max - 1), SDL_WINDOWPOS_CENTERED_DISPLAY(display_max - 1), winWidth, winHeight, flags);
 		// Create OpenGL context
-
 		SDL_GLContext glContext = SDL_GL_CreateContext(window);
 		// Initialize GLEW
 		glewInit();
@@ -501,9 +500,13 @@ int main(int argc, char *argv[])
 		char label[2];
 		char side;
 		char *bufferI = NULL;
-		bufferI = (char*)malloc(sizeof(char) * 4000000);
+		bufferI = (char*)malloc(sizeof(char) * 10000000);
+		char *bufferL = NULL;
+		bufferL = (char*)malloc(sizeof(char) * 4000000);
 		char *bufferD = NULL;
-		bufferD = (char*)malloc(sizeof(char) * 4000000);
+		bufferD = (char*)malloc(sizeof(char) * 10000000);
+		char *bufferR = NULL;
+		bufferR = (char*)malloc(sizeof(char) * 4000000);
 		int c = 0;
 		int bytesReaded = 0;
 		int iSendResult = 0;
@@ -516,17 +519,28 @@ int main(int argc, char *argv[])
 
 		cv::Mat image0 = cv::Mat(resizeHeight, resizeWidth, CV_8UC4, 1);
 		cv::Mat image1 = cv::Mat(zedHeight, zedWidth, CV_8UC4, 1);
+		cv::Mat image2 = cv::Mat(zedHeight, zedWidth, CV_8UC4, 1);
+		cv::Mat imageRight=cv::Mat(zedHeight, zedWidth, CV_8UC4, 1);
+		cv::Mat imageLeft=cv::Mat(zedHeight, zedWidth, CV_8UC4, 1);
 
 		//variables to measure the time we use to pass the images to oculus
-		std::chrono::time_point<std::chrono::system_clock> startChrono, endChrono;
+		std::chrono::time_point<std::chrono::system_clock> startChrono, endChrono, startTest, endTest;
 		startChrono = std::chrono::system_clock::now();
 		endChrono = std::chrono::system_clock::now();
+		startTest = std::chrono::system_clock::now();
+		endTest = std::chrono::system_clock::now();
 		std::chrono::duration<double> elapsed_seconds;
+		std::chrono::duration<double> elapsed_seconds_test;
 		double read[1000];
 		double display[1000];
+		double distribution[65][1000];
+		int l = 0;
+		int old_category = 8;
+		int n = 0;
 		int i = 0;
 		std::ofstream fs("readLatency.txt");
 		std::ofstream fs2("displayLatency.txt");
+		std::ofstream fs3("distribution.txt");
 
 
 		//variables used in case of decoding the images
@@ -539,8 +553,6 @@ int main(int argc, char *argv[])
 		char resize;
 		char encode = 'N';
 		int capacityInt = 0;
-		cv::Mat imageLeft(resizeHeight, resizeWidth, CV_8UC4, 1);
-		cv::Mat imageRight(resizeHeight, resizeWidth, CV_8UC4, 1);
 		// Main loop
 		while (true) {
 			// Compute the time used to render the previous frame
@@ -559,7 +571,15 @@ int main(int argc, char *argv[])
 			if (zedtime > 1000) {
 				zedFPS = zedc;
 				zedc = 0;
-				zedtime = 0;				
+				zedtime = 0;
+				if (n < 1000) {
+					for (int h = 0; h < l; h++) {
+						fs3 << distribution[h][n] << "  ";
+					}
+					fs3 << endl;
+					n++;
+					l = 0;
+				}
 			}
 			// Increment the Rift chronometer and the Rift frame counter
 			rifttime += timePerFrame;
@@ -623,20 +643,51 @@ int main(int argc, char *argv[])
 				//if (isVisible) {
 				//we need to receive the data from both cameras		 
 				startChrono = std::chrono::system_clock::now();
+				if (l == 0) {
+					startTest = std::chrono::system_clock::now();
+					endTest = startTest;
+				}
 				while (!both) {
 					iResult = recv(ClientSocket, recvbuf, 2, 0);
 					if (iResult>0) {
 						label[0] = recvbuf[0];
-						label[1] = recvbuf[1];
+						label[1] = recvbuf[1];						
 						assert((label[0] == 'a') && (label[1] == 'a'));
 
 						//now we read the the side of the image
-						iResult = recv(ClientSocket, recvbuf, 5, 0);
+						iResult = recv(ClientSocket, recvbuf, 6, 0);
 						if (iResult>0) {
 							side = recvbuf[0];
-							resize_factor = *(int *)&recvbuf[1];
-							imageLeft = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
-							imageRight = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+							encode = recvbuf[1];
+							resize_factor = *(int *)&recvbuf[2];
+							/*char test = recvbuf[2];
+							char test2 = recvbuf[3];
+							char test3 = recvbuf[4];
+							char test4 = recvbuf[5];*/
+							if ((resize_factor <= 8 && resize_factor>0) && (resize_factor!=old_category)) {
+								if (side == 'L') {
+									imageLeft.release();
+									imageRight.release();
+									if (encode == 'R') {
+										imageLeft = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC3, 1);
+									}
+									else {
+										imageLeft = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+									}
+								}
+								else if (side == 'R') {
+									if (encode == 'R') {
+										imageRight = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC3, 1);
+									}
+									else {
+										imageRight = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+									}
+								}
+								else printf(" ");
+							}
+							if (side == 'R') {
+								old_category = resize_factor;
+							}
 							//encode = recvbuf[2];
 							assert((side == 'L') || (side == 'R'));
 
@@ -649,7 +700,7 @@ int main(int argc, char *argv[])
 									resize_factor = 1;
 									image0 = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
 									imageLeft = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
-									imageRight = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+									imageRight = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);*/
 									if (encode == 'Y') {
 										iResult = recv(ClientSocket, recvbuf, 4, 0);
 										capacityInt = *(int *)recvbuf;
@@ -662,8 +713,8 @@ int main(int argc, char *argv[])
 											sizeR = size;
 										}
 									}
-								}
-
+								
+							/*
 								else if (resize == 'b') {
 									resize_factor = 1;
 									image0 = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
@@ -762,10 +813,16 @@ int main(int argc, char *argv[])
 											if (c == size) {
 												both = true;
 												endChrono= std::chrono::system_clock::now();
+												endTest = endChrono;
 												elapsed_seconds = endChrono - startChrono;
+												elapsed_seconds_test = endTest - startTest;
 												if (i < 1000) {
 													read[i] = (double)elapsed_seconds.count() * 1000;
 													fs << read[i] << endl;
+												}
+												if (n < 1000) {
+													distribution[l][n] = (double)elapsed_seconds_test.count() * 1000;
+													l++;
 												}
 												zedc++;
 												//we create the feedback we want to send to the intermidiate node
@@ -779,7 +836,7 @@ int main(int argc, char *argv[])
 													closesocket(ClientSocket);
 													WSACleanup();
 													return 1;
-												}												
+												}											
 											}
 										}
 										else {
@@ -830,10 +887,10 @@ int main(int argc, char *argv[])
 						//return 1;
 					}
 				}
-				/*memcpy(image1.data, bufferI, zedHeight*zedWidth * 4);
+				/*memcpy(image1.data, bufferI, size);
 				cv::imwrite("zedLeft.jpg", image1);
-				memcpy(image1.data, bufferD, zedHeight*zedWidth * 4);
-				cv::imwrite("zedRigth.jpg", image1);*/
+				memcpy(image2.data, bufferD, size);
+				cv::imwrite("zedRigth.jpg", image2);*/
 				if (encode == 'Y') {
 					buff.reserve(capacityL);
 					buff2.reserve(capacityR);
@@ -860,6 +917,70 @@ int main(int argc, char *argv[])
 						memcpy(bufferD, image1.data, zedHeight*zedWidth * 3);
 					}
 				}
+				else if (encode == 'R') {
+					if ((size == (resize_factor *resize_factor * resizeWidth * resizeHeight * 3)) && (resize_factor != 8)) {
+						memcpy(imageLeft.data, bufferI, resize_factor *resize_factor * resizeHeight * resizeWidth * 3);
+						//cv::imwrite("zedReceived.jpg", image0);
+						cv::resize(imageLeft, image1, cv::Size(zedWidth, zedHeight));
+						//cv::imwrite("zedResized.jpg", image1);
+						bufferI = (char *)realloc(bufferI, zedHeight *zedWidth * 3);
+						memcpy(bufferI, image1.data, zedHeight*zedWidth * 3);
+
+						memcpy(imageRight.data, bufferD, resize_factor * resize_factor *  resizeHeight * resizeWidth * 3);
+						//cv::imwrite("zedReceivedRigth.jpg", image0);
+						cv::resize(imageRight, image1, cv::Size(zedWidth, zedHeight));
+						//cv::imwrite("zedResizedRigth.jpg", image1);
+						bufferD = (char *)realloc(bufferD, zedHeight*zedWidth * 3);
+						memcpy(bufferD, image1.data, zedHeight*zedWidth * 3);
+					}
+				}
+				else{
+					if ((size == (resize_factor *resize_factor * resizeWidth * resizeHeight * 4)) && (resize_factor != 8)) {
+						memcpy(imageLeft.data, bufferI, resize_factor *resize_factor * resizeHeight * resizeWidth * 4);
+						//cv::imwrite("zedReceived.jpg", image0);
+						cv::resize(imageLeft, image1, cv::Size(zedWidth, zedHeight));
+						//cv::imwrite("zedResized.jpg", image1);
+						bufferI = (char *)realloc(bufferI, zedHeight *zedWidth * 4);
+						memcpy(bufferI, image1.data, zedHeight*zedWidth * 4);
+
+						memcpy(imageRight.data, bufferD, resize_factor * resize_factor *  resizeHeight * resizeWidth * 4);
+						//cv::imwrite("zedReceivedRigth.jpg", image0);
+						cv::resize(imageRight, image1, cv::Size(zedWidth, zedHeight));
+						//cv::imwrite("zedResizedRigth.jpg", image1);
+						bufferD = (char *)realloc(bufferD, zedHeight*zedWidth * 4);
+						memcpy(bufferD, image1.data, zedHeight*zedWidth * 4);
+					}
+				}
+				/*if (encode == 'Y') {
+					buff.reserve(capacityL);
+					buff2.reserve(capacityR);
+
+					buff.resize(sizeL);
+					buff2.resize(sizeR);
+
+					memcpy(buff.data(), bufferI, sizeL);
+					memcpy(buff2.data(), bufferD, sizeR);
+					imageLeft = cv::imdecode(buff, CV_LOAD_IMAGE_COLOR);
+					imageRight = cv::imdecode(buff2, CV_LOAD_IMAGE_COLOR);
+					//cv::imwrite("zedResizedRigth.jpg", imageRight);
+					cv::Size dimensions = imageLeft.size();
+					//cv::imwrite("imageDecoded.jpg", imageLeft);
+					size = dimensions.height * dimensions.width * 4;
+					if (size == (resize_factor *resize_factor * resizeWidth * resizeHeight * 4)) {
+						imageLeft = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+						cv::resize(imageLeft, image1, cv::Size(zedWidth, zedHeight));
+						//cv::imwrite("zedResized.jpg", image1);
+						bufferI = (char *)realloc(bufferI, zedHeight*zedWidth * 3);
+						memcpy(bufferI, image1.data, zedHeight*zedWidth * 3);
+
+						imageRight = cv::Mat(resize_factor*resizeHeight, resize_factor*resizeWidth, CV_8UC4, 1);
+						cv::resize(imageRight, image2, cv::Size(zedWidth, zedHeight));
+						//cv::imwrite("zedResizedRigth.jpg", image2);
+						bufferD = (char *)realloc(bufferD, zedHeight*zedWidth * 3);
+						memcpy(bufferD, image2.data, zedHeight*zedWidth * 3);
+						//std::memmove(bufferD, image2.data, zedHeight*zedWidth * 3);
+					}
+				}
 				else {
 					if ((size == (resize_factor *resize_factor * resizeWidth * resizeHeight * 4)) && (resize_factor != 8)) {
 						memcpy(imageLeft.data, bufferI, resize_factor *resize_factor * resizeHeight * resizeWidth * 4);
@@ -876,11 +997,11 @@ int main(int argc, char *argv[])
 						bufferD = (char *)realloc(bufferD, zedHeight*zedWidth * 4);
 						memcpy(bufferD, image1.data, zedHeight*zedWidth * 4);
 					}
-				}
+				}*/
 				/*memcpy(image1.data, bufferI,zedHeight * zedWidth * 4);
 				cv::imwrite("LeftImage.jpg", image1);
-				memcpy(image1.data, bufferD, zedHeight * zedWidth * 4);
-				cv::imwrite("RigthImage.jpg", image1);*/
+				memcpy(image2.data, bufferD, zedHeight * zedWidth * 4);
+				cv::imwrite("RigthImage.jpg", image2);*/
 				if (refresh) {
 					startChrono = std::chrono::system_clock::now();
 #if OPENGL_GPU_INTEROP
@@ -915,11 +1036,11 @@ int main(int argc, char *argv[])
 						// Bind the left or right ZED image
 						glBindTexture(GL_TEXTURE_2D, eye == ovrEye_Left ? zedTextureID_L : zedTextureID_R);
 #if !OPENGL_GPU_INTEROP
-						if (encode == 'Y') {
-							glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, zedWidth, zedHeight, 0, GL_BGR, GL_UNSIGNED_BYTE, (eye == ovrEye_Left ? bufferI : bufferD));
+						if (encode == 'N') {
+							glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, zedWidth, zedHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, (eye == ovrEye_Left ? bufferI : bufferD));
 						}
 						else {
-							glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, zedWidth, zedHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, (eye == ovrEye_Left ? bufferI : bufferD));
+							glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, zedWidth, zedHeight, 0, GL_BGR, GL_UNSIGNED_BYTE, (eye == ovrEye_Left ? bufferI : bufferD));
 						}
 						/*if (eye == ovrEye_Left)
 						{
@@ -1038,11 +1159,11 @@ int main(int argc, char *argv[])
 			// Bind the left or right ZED image
 			glBindTexture(GL_TEXTURE_2D, zedTextureID_L);
 #if !OPENGL_GPU_INTEROP
-			if (encode == 'Y') {
-				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, zedWidth, zedHeight, 0, GL_BGR, GL_UNSIGNED_BYTE, bufferI);
+			if (encode == 'N') {
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, zedWidth, zedHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, bufferI);
 			}
 			else {
-				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, zedWidth, zedHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, bufferI);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, zedWidth, zedHeight, 0, GL_BGR, GL_UNSIGNED_BYTE, bufferI);
 			}
 
 			/*if (eye == ovrEye_Left)
