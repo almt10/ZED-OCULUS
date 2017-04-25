@@ -4,4 +4,4 @@ project(thesis)
 set(CMAKE_CXX_STANDARD 11)
 
 #add_executable(sender main.cpp)
-add_executable(receiver recv.cpp)
+add_executable(receiver recv-jpeg.cpp)
